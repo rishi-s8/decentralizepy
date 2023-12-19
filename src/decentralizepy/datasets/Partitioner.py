@@ -1,6 +1,7 @@
 from random import Random
 
 import numpy as np
+import torch
 
 """ Adapted from https://pytorch.org/tutorials/intermediate/dist_tuto.html """
 
@@ -22,8 +23,13 @@ class Partition(object):
             A list of indices
 
         """
-        self.data = data
+        self.data = [data[i] for i in index]
         self.index = index
+
+        if isinstance(data, torch.Tensor):
+            self.data = torch.tensor(self.data, dtype=data.dtype)
+        elif isinstance(data, np.ndarray):
+            self.data = np.array(self.data, dtype=data.dtype)
 
     def __len__(self):
         """
@@ -51,8 +57,7 @@ class Partition(object):
             The data sample with the given `index` in the dataset
 
         """
-        data_idx = self.index[index]
-        return self.data[data_idx]
+        return self.data[index]
 
 
 class DataPartitioner(object):

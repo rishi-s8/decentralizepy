@@ -1,6 +1,7 @@
 import logging
 
 import torch
+from tqdm.auto import tqdm
 
 from decentralizepy import utils
 from decentralizepy.training.Training import Training
@@ -112,6 +113,7 @@ class LLMTraining(Training):
             Loss Value for the step
 
         """
+        # batch = {k: v.cuda() for k, v in batch.items()}
         self.optimizer.zero_grad()
         input_ids = batch["input_ids"]
         attention_mask = batch["attention_mask"]
@@ -133,18 +135,42 @@ class LLMTraining(Training):
 
         """
         trainset = dataset.get_trainset(self.batch_size, self.shuffle)
+        self.model.train()
+        # self.model.cuda()
+
         for epoch in range(self.rounds):
+            # print("Epoch: ", epoch)
+            # progress_bar = tqdm(range(len(trainset)))
             epoch_loss = 0.0
             count = 0
-            for batch in trainset:
-                logging.debug(
-                    "Starting minibatch {} with num_samples: {}".format(
-                        count, len(batch["input_ids"])
+            if self.rank == 0:
+                for batch in tqdm(
+                    trainset, desc=f"Epoch {epoch + 1}/{self.rounds}", leave=False
+                ):
+                    logging.debug(
+                        "Starting minibatch {} with num_samples: {}".format(
+                            count, len(batch["input_ids"])
+                        )
                     )
-                )
-                epoch_loss += self.trainstep(batch)
-                count += 1
-            logging.debug("Epoch: {} loss: {}".format(epoch, epoch_loss / count))
+                    epoch_loss += self.trainstep(batch)
+                    count += 1
+            else:
+                for batch in trainset:
+                    logging.debug(
+                        "Starting minibatch {} with num_samples: {}".format(
+                            count, len(batch["input_ids"])
+                        )
+                    )
+                    epoch_loss += self.trainstep(batch)
+                    count += 1
+                # progress_bar.update(1)
+            # logging.debug("Epoch: {} loss: {}".format(epoch, epoch_loss / count))
+            # print("Epoch: {} loss: {}".format(epoch, epoch_loss / count))
+            logging.info("Epoch: {} loss: {}".format(epoch, epoch_loss / count))
+            # progress_bar.refresh()
+            # progress_bar.reset()
+
+        self.model.cpu()
 
     def train(self, dataset):
         """
@@ -157,6 +183,7 @@ class LLMTraining(Training):
 
         """
         self.model.train()
+        # self.model.cuda()
 
         if self.full_epochs:
             self.train_full(dataset)
@@ -171,3 +198,5 @@ class LLMTraining(Training):
                     logging.debug("Round: {} loss: {}".format(count, iter_loss / count))
                     if count >= self.rounds:
                         break
+
+        # self.model.cpu()

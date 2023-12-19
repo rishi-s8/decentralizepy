@@ -44,32 +44,32 @@ class CIFAR10(Dataset):
                 torch.Generator().manual_seed(self.random_seed),
             )
 
-        c_len = len(trainset)
+        self.c_len = len(trainset)
 
         if self.sizes == None:  # Equal distribution of data among processes
-            e = c_len // self.num_partitions
-            frac = e / c_len
+            e = self.c_len // self.num_partitions
+            frac = e / self.c_len
             self.sizes = [frac] * self.num_partitions
             self.sizes[-1] += 1.0 - frac * self.num_partitions
             logging.debug("Size fractions: {}".format(self.sizes))
 
         if not self.partition_niid or self.partition_niid == "iid":
             # IID partitioning
-            self.trainset = DataPartitioner(
+            self.training_partitions = DataPartitioner(
                 trainset, sizes=self.sizes, seed=self.random_seed
-            ).use(self.dataset_id)
+            )
         elif self.partition_niid == "simple":
-            self.trainset = SimpleDataPartitioner(
+            self.training_partitions = SimpleDataPartitioner(
                 trainset, sizes=self.sizes, seed=self.random_seed
-            ).use(self.dataset_id)
+            )
         elif self.partition_niid == "dirichlet":
-            self.trainset = DirichletDataPartitioner(
+            self.training_partitions = DirichletDataPartitioner(
                 trainset,
                 sizes=self.sizes,
                 seed=self.random_seed,
                 alpha=self.alpha,
                 num_classes=self.num_classes,
-            ).use(self.dataset_id)
+            )
         elif (
             self.partition_niid == "kshard" or str(self.partition_niid) == "True"
         ):  # Backward compatibility
@@ -83,13 +83,14 @@ class CIFAR10(Dataset):
             all_trainset = []
             for y, x in train_data.items():
                 all_trainset.extend([(a, y) for a in x])
-            self.trainset = KShardDataPartitioner(
+            self.training_partitions = KShardDataPartitioner(
                 all_trainset, self.sizes, shards=self.shards, seed=self.random_seed
-            ).use(self.dataset_id)
+            )
         else:
             raise NotImplementedError(
                 "Partitioning method {} not implemented".format(self.partition_niid)
             )
+        self.trainset = self.training_partitions.use(self.dataset_id)
 
     def load_testset(self):
         """
@@ -126,6 +127,8 @@ class CIFAR10(Dataset):
         shards=1,
         validation_source="",
         validation_size="",
+        *args,
+        **kwargs
     ):
         """
         Constructor which reads the data files, instantiates and partitions the dataset
@@ -176,6 +179,8 @@ class CIFAR10(Dataset):
             test_batch_size,
             validation_source,
             validation_size,
+            *args,
+            **kwargs
         )
 
         self.num_classes = NUM_CLASSES
@@ -196,7 +201,7 @@ class CIFAR10(Dataset):
         if self.__testing__:
             self.load_testset()
 
-    def get_trainset(self, batch_size=1, shuffle=False):
+    def get_trainset(self, batch_size=1, shuffle=False, dataset_id=None):
         """
         Function to get the training set
 
@@ -216,7 +221,16 @@ class CIFAR10(Dataset):
 
         """
         if self.__training__:
-            return DataLoader(self.trainset, batch_size=batch_size, shuffle=shuffle)
+            if dataset_id is not None:
+                return DataLoader(
+                    self.training_partitions.use(dataset_id), # This is costly for lists, fix it.
+                    batch_size=batch_size,
+                    shuffle=shuffle,
+                )
+            elif self.trainset is not None:
+                return DataLoader(self.trainset, batch_size=batch_size, shuffle=shuffle)
+            else:
+                raise RuntimeError("Training set not initialized!")
         raise RuntimeError("Training set not initialized!")
 
     def get_testset(self):
@@ -272,45 +286,49 @@ class CIFAR10(Dataset):
 
         """
         model.eval()
+        if torch.cuda.is_available():
+            model = model.cuda()
         testloader = self.get_testset()
 
         logging.debug("Test Loader instantiated.")
 
-        correct_pred = [0 for _ in range(NUM_CLASSES)]
-        total_pred = [0 for _ in range(NUM_CLASSES)]
-
-        total_correct = 0
-        total_predicted = 0
+        class_correct = torch.zeros(NUM_CLASSES, device = self.device, dtype = torch.int32)
+        class_total = torch.zeros(NUM_CLASSES, device = self.device, dtype=torch.int32)
 
         with torch.no_grad():
             loss_val = 0.0
             count = 0
             for elems, labels in testloader:
+                if torch.cuda.is_available():
+                    elems = elems.cuda()
+                    labels = labels.cuda()
                 outputs = model(elems)
-                loss_val += loss(outputs, labels).item()
-                count += 1
+                loss_val += loss(outputs, labels) * labels.size(0)
+                outputs = outputs
+                labels = labels
+                count += labels.size(0)
                 _, predictions = torch.max(outputs, 1)
-                for label, prediction in zip(labels, predictions):
-                    logging.debug("{} predicted as {}".format(label, prediction))
-                    if label == prediction:
-                        correct_pred[label] += 1
-                        total_correct += 1
-                    total_pred[label] += 1
-                    total_predicted += 1
+
+                correct = predictions.eq(labels)
+
+                for i in range(NUM_CLASSES):
+                    class_correct[i] += correct[labels == i].sum()
+                    class_total[i] += (labels == i).sum()
 
         logging.debug("Predicted on the test set")
 
-        for key, value in enumerate(correct_pred):
-            if total_pred[key] != 0:
-                accuracy = 100 * float(value) / total_pred[key]
-            else:
-                accuracy = 100.0
-            logging.debug("Accuracy for class {} is: {:.1f} %".format(key, accuracy))
-
-        accuracy = 100 * float(total_correct) / total_predicted
+        overall_accuracy = 100 * class_correct.sum().float() / class_total.sum() if class_total.sum() != 0 else 100.0
         loss_val = loss_val / count
-        logging.info("Overall test accuracy is: {:.1f} %".format(accuracy))
-        return accuracy, loss_val
+
+        per_class_accuracy = 100 * class_correct.float() / class_total.where(class_total != 0, torch.tensor(1.0))
+
+
+        for i in range(NUM_CLASSES):
+            logging.debug("Accuracy for class {} is: {:.1f} %".format(i, per_class_accuracy[i]))
+
+        logging.info("Overall test accuracy is: {:.1f} %".format(overall_accuracy))
+        model = model.cpu()
+        return overall_accuracy.item(), loss_val.item()
 
     def validate(self, model, loss):
         """
@@ -470,11 +488,11 @@ class BasicBlock(nn.Module):
         self.conv1 = nn.Conv2d(
             in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
         )
-        self.bn1 = nn.BatchNorm2d(planes)
+        # self.bn1 = nn.BatchNorm2d(planes)
         self.conv2 = nn.Conv2d(
             planes, planes, kernel_size=3, stride=1, padding=1, bias=False
         )
-        self.bn2 = nn.BatchNorm2d(planes)
+        # self.bn2 = nn.BatchNorm2d(planes)
 
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
@@ -486,15 +504,86 @@ class BasicBlock(nn.Module):
                     stride=stride,
                     bias=False,
                 ),
-                nn.BatchNorm2d(self.expansion * planes),
+                # nn.BatchNorm2d(self.expansion * planes),
             )
 
+    # def forward(self, x):
+    #     out = F.relu(self.bn1(self.conv1(x)))
+    #     out = self.bn2(self.conv2(out))
+    #     out += self.shortcut(x)
+    #     out = F.relu(out)
+    #     return out
     def forward(self, x):
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
+        out = F.relu(self.conv1(x))
+        out = self.conv2(out)
         out += self.shortcut(x)
         out = F.relu(out)
         return out
+
+class Bottleneck(nn.Module):
+    expansion = 4
+
+    def __init__(self, in_planes, planes, stride=1):
+        super(Bottleneck, self).__init__()
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=1, bias=False)
+        self.conv2 = nn.Conv2d(planes, planes, kernel_size=3,
+                               stride=stride, padding=1, bias=False)
+        self.conv3 = nn.Conv2d(planes, self.expansion *
+                               planes, kernel_size=1, bias=False)
+
+        self.shortcut = nn.Sequential()
+        if stride != 1 or in_planes != self.expansion*planes:
+            self.shortcut = nn.Sequential(
+                nn.Conv2d(in_planes, self.expansion*planes,
+                          kernel_size=1, stride=stride, bias=False),
+            )
+
+    def forward(self, x):
+        out = F.relu(self.conv1(x))
+        out = F.relu(self.conv2(out))
+        out = self.conv3(out)
+        out += self.shortcut(x)
+        out = F.relu(out)
+        return out
+    
+class ResNet(nn.Module):
+    def __init__(self, block, num_blocks, num_classes):
+        super(ResNet, self).__init__()
+        self.in_planes = 64
+        self.pool_size = 8
+
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7,
+                               stride=2, padding=3, bias=False)
+        self.layer1 = self._make_layer(block, 64, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, 128, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, 256, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, 512, num_blocks[3], stride=2)
+        self.pool = nn.AdaptiveAvgPool2d((self.pool_size,self.pool_size)) 
+        self.linear = nn.Linear(512*block.expansion*self.pool_size**2, num_classes, bias=False)
+
+        self.skip_idx = -1
+
+    def _make_layer(self, block, planes, num_blocks, stride):
+        strides = [stride] + [1]*(num_blocks-1)
+        layers = []
+        for stride in strides:
+            layers.append(block(self.in_planes, planes, stride))
+            self.in_planes = planes * block.expansion
+        return nn.Sequential(*layers)
+
+    def forward(self, x):
+        out = F.relu(self.conv1(x))
+        out = self.layer1(out)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.pool(out)
+        out = out.view(out.size(0), -1)
+        out = self.linear(out)
+        return out
+
+def ResNet18():
+    return ResNet(BasicBlock, [2, 2, 2, 2], NUM_CLASSES)
 
 
 class ResNet8(Model):

@@ -27,6 +27,8 @@ class MovieLens(Dataset):
         test_dir="",
         sizes="",
         test_batch_size=1,
+        *args,
+        **kwargs
     ):
         """
         Constructor which reads the data files, instantiates and partitions the dataset
@@ -66,6 +68,8 @@ class MovieLens(Dataset):
             test_dir,
             sizes,
             test_batch_size,
+            *args,
+            **kwargs
         )
         self.n_users, self.n_items, df_train, df_test = self._load_data()
         self.train_data, self.test_data = self._split_data(

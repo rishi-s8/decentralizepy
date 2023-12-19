@@ -65,6 +65,8 @@ class Training:
         self.full_epochs = utils.conditional_value(full_epochs, "", False)
         self.batch_size = utils.conditional_value(batch_size, "", int(1))
         self.shuffle = utils.conditional_value(shuffle, "", False)
+        
+        self.epoch = 0
 
     def reset_optimizer(self, optimizer):
         """
@@ -119,6 +121,9 @@ class Training:
 
         """
         self.model.zero_grad()
+        if torch.cuda.is_available():
+            data = data.cuda()
+            target = target.cuda()
         output = self.model(data)
         loss_val = self.loss(output, target)
         loss_val.backward()
@@ -135,20 +140,22 @@ class Training:
             The training dataset.
 
         """
-        for epoch in range(self.rounds):
+        for epoch in range(self.epoch, self.epoch + self.rounds):
             trainset = dataset.get_trainset(self.batch_size, self.shuffle)
             epoch_loss = 0.0
             count = 0
             for data, target in trainset:
-                logging.debug(
-                    "Starting minibatch {} with num_samples: {}".format(
-                        count, len(data)
-                    )
-                )
-                logging.debug("Classes: {}".format(target))
+                # logging.debug(
+                #     "Starting minibatch {} with num_samples: {}".format(
+                #         count, len(data)
+                #     )
+                # )
+                # logging.debug("Classes: {}".format(target))
                 epoch_loss += self.trainstep(data, target)
                 count += 1
             logging.debug("Epoch: {} loss: {}".format(epoch, epoch_loss / count))
+            # print("Epoch: {} loss: {}".format(epoch, epoch_loss / count))
+        self.epoch += self.rounds
 
     def train(self, dataset):
         """
@@ -161,6 +168,8 @@ class Training:
 
         """
         self.model.train()
+        if torch.cuda.is_available():
+            self.model = self.model.cuda()
 
         if self.full_epochs:
             self.train_full(dataset)
@@ -172,6 +181,7 @@ class Training:
                 for data, target in trainset:
                     iter_loss += self.trainstep(data, target)
                     count += 1
-                    logging.debug("Round: {} loss: {}".format(count, iter_loss / count))
+                    # logging.debug("Round: {} loss: {}".format(count, iter_loss / count))
                     if count >= self.rounds:
                         break
+        self.model = self.model.cpu()

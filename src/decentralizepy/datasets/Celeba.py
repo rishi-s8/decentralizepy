@@ -192,6 +192,8 @@ class Celeba(Dataset):
         images_dir="",
         sizes="",
         test_batch_size=128,
+        *args,
+        **kwargs
     ):
         """
         Constructor which reads the data files, instantiates and partitions the dataset
@@ -233,6 +235,8 @@ class Celeba(Dataset):
             test_dir,
             sizes,
             test_batch_size,
+            *args,
+            **kwargs
         )
         self.IMAGES_DIR = utils.conditional_value(images_dir, "", None)
         assert self.IMAGES_DIR != None

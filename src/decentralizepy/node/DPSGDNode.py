@@ -1,3 +1,4 @@
+import copy
 import importlib
 import json
 import logging
@@ -57,6 +58,7 @@ class DPSGDNode(Node):
         Start the decentralized learning
 
         """
+        print("WeightsStore: ", self.weights_store_dir)
         self.testset = self.dataset.get_testset()
         rounds_to_test = self.test_after
         rounds_to_train_evaluate = self.train_evaluate_after
@@ -70,6 +72,8 @@ class DPSGDNode(Node):
 
             self.iteration = iteration
             self.trainer.train(self.dataset)
+
+            intermediate_weights = copy.deepcopy(self.model.state_dict())
 
             new_neighbors = self.get_neighbors()
 
@@ -114,6 +118,8 @@ class DPSGDNode(Node):
 
             self.sharing._averaging(averaging_deque)
 
+            post_weights = copy.deepcopy(self.model.state_dict())
+
             if self.reset_optimizer:
                 self.optimizer = self.optimizer_class(
                     self.model.parameters(), **self.optimizer_params
@@ -149,7 +155,7 @@ class DPSGDNode(Node):
                     iteration + 1
                 ] = self.communication.total_data
 
-            if rounds_to_train_evaluate == 0:
+            if iteration == 0 or rounds_to_train_evaluate == 0:
                 logging.info("Evaluating on train set.")
                 rounds_to_train_evaluate = self.train_evaluate_after * change
                 loss_after_sharing = self.trainer.eval_loss(self.dataset)
@@ -160,6 +166,20 @@ class DPSGDNode(Node):
                     "Training Loss",
                     "Communication Rounds",
                     os.path.join(self.log_dir, "{}_train_loss.png".format(self.rank)),
+                )
+                torch.save(
+                    intermediate_weights,
+                    os.path.join(
+                        self.weights_store_dir,
+                        "{}_{}_inter.pt".format(self.uid, iteration),
+                    ),
+                )
+                torch.save(
+                    post_weights,
+                    os.path.join(
+                        self.weights_store_dir,
+                        "{}_{}_post.pt".format(self.uid, iteration),
+                    ),
                 )
 
             if self.dataset.__testing__ and rounds_to_test == 0:

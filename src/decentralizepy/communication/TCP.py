@@ -1,9 +1,10 @@
 import json
 import logging
-import pickle
 import socket
 from collections import deque
 from time import sleep
+import torch
+from io import BytesIO
 
 import zmq
 
@@ -86,10 +87,13 @@ class TCP(Communication):
         self.uid = mapping.get_uid(rank, machine_id)
         self.identity = str(self.uid).encode()
         self.context = zmq.Context()
+        self.context.set(zmq.MAX_SOCKETS, 1000000)
         self.router = self.context.socket(zmq.ROUTER)
         self.router.setsockopt(zmq.IDENTITY, self.identity)
         self.router.setsockopt(zmq.RCVTIMEO, self.recv_timeout)
         self.router.setsockopt(zmq.ROUTER_MANDATORY, 1)
+        self.router.setsockopt(zmq.SNDHWM, 0)
+        self.router.setsockopt(zmq.RCVHWM, 0)
         self.router.bind(self.addr(rank, machine_id))
 
         self.total_data = 0
@@ -123,9 +127,13 @@ class TCP(Communication):
 
         """
         data_len = 0
+        buffer = BytesIO()
         if "params" in data:
-            data_len = len(pickle.dumps(data["params"]))
-        output = pickle.dumps(data)
+            buffer_params = BytesIO()
+            torch.save(data["params"], buffer_params)
+            data_len = buffer_params.getbuffer().nbytes
+        torch.save(data, buffer)
+        output = buffer.getvalue()
         self.total_meta += len(output) - data_len
         self.total_data += data_len
         return output
@@ -148,7 +156,8 @@ class TCP(Communication):
 
         """
         sender = int(sender.decode())
-        data = pickle.loads(data)
+        buffer = BytesIO(data)
+        data = torch.load(buffer)
         return sender, data
 
     def init_connection(self, neighbor):
@@ -165,6 +174,8 @@ class TCP(Communication):
         id = str(neighbor).encode()
         req = self.context.socket(zmq.DEALER)
         req.setsockopt(zmq.IDENTITY, self.identity)
+        req.setsockopt(zmq.SNDHWM, 0)
+        req.setsockopt(zmq.RCVHWM, 0)
         req.connect(self.addr(*self.mapping.get_machine_and_rank(neighbor)))
         self.peer_sockets[id] = req
 

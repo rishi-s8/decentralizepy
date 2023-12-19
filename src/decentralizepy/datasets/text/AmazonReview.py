@@ -1,8 +1,6 @@
 import logging
 import os
 from collections import defaultdict
-from random import Random
-from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -10,9 +8,11 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from decentralizepy.datasets.Dataset import Dataset
+from decentralizepy.datasets.Partitioner import DataPartitioner
 from decentralizepy.datasets.text.LLMData import LLMData
 from decentralizepy.mappings.Mapping import Mapping
 from decentralizepy.models.Model import Model
@@ -92,11 +92,26 @@ class AmazonReview(Dataset):
         files.sort()
         c_len = len(files)
 
-        rng = Random()
-        rng.seed(self.random_seed)
-        rng.shuffle(files)
+        # rng = Random()
+        # rng.seed(self.random_seed)
+        # rng.shuffle(files)
 
-        my_clients = [files[self.dataset_id]]
+        if self.sizes == None:  # Equal distribution of data among processes
+            e = c_len // self.num_partitions
+            frac = e / c_len
+            self.sizes = [frac] * self.num_partitions
+            self.sizes[-1] += 1.0 - frac * self.num_partitions
+            logging.debug("Size fractions: {}".format(self.sizes))
+
+        print("Dataset ID: ", self.dataset_id)
+
+        my_clients_temp = DataPartitioner(files, self.sizes).use(self.dataset_id)
+        my_clients = []
+        for i, x in enumerate(my_clients_temp):
+            my_clients.append(x)
+            i += 1
+            if self.at_most and i >= self.at_most:
+                break
         my_train_data = {"x": [], "y": []}
         self.clients = []
         self.num_samples = []
@@ -157,8 +172,9 @@ class AmazonReview(Dataset):
         train_dir="",
         test_dir="",
         sizes="",
-        test_batch_size=128,
+        test_batch_size=256,
         tokenizer="BERT",
+        at_most=0,
     ):
         """
         Constructor which reads the data files, instantiates and partitions the dataset
@@ -199,11 +215,15 @@ class AmazonReview(Dataset):
             sizes,
             test_batch_size,
         )
+        self.at_most = at_most
+
         if tokenizer == "MobileBERT":
+            logging.info("Using MobileBERT tokenizer")
             self.tokenizer = AutoTokenizer.from_pretrained(
                 "google/mobilebert-uncased", model_max_length=512
             )
         elif tokenizer == "BERT":
+            logging.info("Using BERT tokenizer")
             self.tokenizer = AutoTokenizer.from_pretrained(
                 "bert-base-uncased", model_max_length=512
             )
@@ -265,8 +285,11 @@ class AmazonReview(Dataset):
             )
         raise RuntimeError("Test set not initialized!")
 
-    def test(self, model, one_batch=True):
+    def test(self, model, loss=None, batches=10):
         model.eval()
+
+        # correct_pred = torch.tensor([0 for _ in range(NUM_CLASSES)]).to(torch.int64).cuda()
+        # total_pred = torch.tensor([0 for _ in range(NUM_CLASSES)]).to(torch.int64).cuda()
 
         correct_pred = torch.tensor([0 for _ in range(NUM_CLASSES)]).to(torch.int64)
         total_pred = torch.tensor([0 for _ in range(NUM_CLASSES)]).to(torch.int64)
@@ -275,11 +298,15 @@ class AmazonReview(Dataset):
         total_predicted = 0
 
         testloader = self.get_testset()
+        # model.cuda()
 
         with torch.no_grad():
             loss_val = 0.0
             count = 0
-            for batch in testloader:
+            for i, batch in enumerate(
+                tqdm(testloader, desc=f"Evaluation", leave=False)
+            ):
+                # batch = {k: v.cuda() for k, v in batch.items()}
                 input_ids = batch["input_ids"]
                 attention_mask = batch["attention_mask"]
                 labels = batch["labels"]
@@ -289,6 +316,9 @@ class AmazonReview(Dataset):
                 count += 1
                 _, predictions = torch.max(logits, 1)
                 _, non_hot_label = torch.max(labels, 1)
+
+                # predictions.cuda()
+                # non_hot_label.cuda()
 
                 correct_mask = non_hot_label == predictions
                 correct_pred += torch.bincount(
@@ -301,7 +331,8 @@ class AmazonReview(Dataset):
                 total_correct += correct_mask.sum().item()
                 total_predicted += len(non_hot_label)
 
-                break
+                if batches and i >= batches:
+                    break
 
                 # for label, prediction in zip(non_hot_label, predictions):
                 #     # print("{} predicted as {}".format(label, prediction))
@@ -316,13 +347,20 @@ class AmazonReview(Dataset):
                     accuracy = 100 * float(value) / total_pred[key]
                 else:
                     accuracy = 100.0
-                logging.debug(
-                    "Accuracy for class {} is: {:.1f} %".format(key, accuracy)
-                )
+                # logging.debug(
+                #     "Accuracy for class {} is: {:.1f} %".format(key, accuracy)
+                # )
+                print("Accuracy for class {} is: {:.1f} %".format(key, accuracy))
 
             accuracy = 100 * float(total_correct) / total_predicted
             loss_val = loss_val / count
-            logging.info("Overall test accuracy is: {:.1f} %".format(accuracy))
+            # logging.info("Overall test accuracy is: {:.1f} %".format(accuracy))
+            print(
+                "Overall test accuracy is: {:.1f}, loss is: {:.4f} %".format(
+                    accuracy, loss_val
+                )
+            )
+            # model.cpu()
             return accuracy, loss_val
 
 

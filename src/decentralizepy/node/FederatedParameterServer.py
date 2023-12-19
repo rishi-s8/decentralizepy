@@ -380,7 +380,7 @@ class FederatedParameterServer(Node):
             if self.dataset.__testing__ and rounds_to_test == 0:
                 rounds_to_test = self.test_after * change
                 logging.info("Evaluating on test set.")
-                ta, tl = self.dataset.test(self.model, self.loss)
+                ta, tl = self.dataset.test(self.model, loss=self.loss)
                 results_dict["test_acc"][iteration + 1] = ta
                 results_dict["test_loss"][iteration + 1] = tl
 
@@ -395,8 +395,8 @@ class FederatedParameterServer(Node):
                 json.dump(results_dict, of)
 
         self.disconnect_neighbors()
-        logging.info("Storing final weight")
-        self.model.dump_weights(self.weights_store_dir, self.uid, iteration)
+        # logging.info("Storing final weight")
+        # self.model.dump_weights(self.weights_store_dir, self.uid, iteration)
         logging.info("All neighbors disconnected. Process complete!")
 
     def __init__(
@@ -486,6 +486,7 @@ class FederatedParameterServer(Node):
             train_evaluate_after,
             *args
         )
+        # os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
         self.working_fraction = working_fraction
 

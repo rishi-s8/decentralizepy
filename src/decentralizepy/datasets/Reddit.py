@@ -189,6 +189,8 @@ class Reddit(Dataset):
         test_dir="",
         sizes="",
         test_batch_size=1024,
+        *args,
+        **kwargs
     ):
         """
         Constructor which reads the data files, instantiates and partitions the dataset
@@ -228,6 +230,8 @@ class Reddit(Dataset):
             test_dir,
             sizes,
             test_batch_size,
+            *args,
+            **kwargs
         )
         if self.train_dir and Path(self.train_dir).exists():
             vocab_path = os.path.join(self.train_dir, "../../vocab/reddit_vocab.pck")

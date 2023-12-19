@@ -189,6 +189,8 @@ class Shakespeare(Dataset):
         test_dir="",
         sizes="",
         test_batch_size=1024,
+        *args,
+        **kwargs
     ):
         """
         Constructor which reads the data files, instantiates and partitions the dataset
@@ -228,6 +230,8 @@ class Shakespeare(Dataset):
             test_dir,
             sizes,
             test_batch_size,
+            *args,
+            **kwargs
         )
         if self.__training__:
             self.load_trainset()

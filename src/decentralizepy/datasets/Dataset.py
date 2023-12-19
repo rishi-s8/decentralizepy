@@ -1,6 +1,6 @@
 from decentralizepy import utils
 from decentralizepy.mappings.Mapping import Mapping
-
+import torch
 
 class Dataset:
     """
@@ -22,6 +22,8 @@ class Dataset:
         test_batch_size="",
         validation_source="",
         validation_size="",
+        *args,
+        **kwargs
     ):
         """
         Constructor which reads the data files, instantiates and partitions the dataset
@@ -54,6 +56,10 @@ class Dataset:
         validation_size : int, optional
             size of the test set used as validation set
         """
+
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+
         self.rank = rank
         self.machine_id = machine_id
         self.mapping = mapping

@@ -212,6 +212,8 @@ class Femnist(Dataset):
         test_batch_size=1024,
         validation_source="",
         validation_size="",
+        *args,
+        **kwargs
     ):
         """
         Constructor which reads the data files, instantiates and partitions the dataset
@@ -257,6 +259,8 @@ class Femnist(Dataset):
             test_batch_size,
             validation_source,
             validation_size,
+            *args,
+            **kwargs
         )
 
         self.num_classes = NUM_CLASSES

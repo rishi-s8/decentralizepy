@@ -2,7 +2,7 @@ import argparse
 import datetime
 import json
 import os
-
+import pandas as pd
 
 def conditional_value(var, nul, default):
     """
@@ -136,3 +136,8 @@ def identity(obj):
         The same object
     """
     return obj
+
+def write_results_to_csv(csv_file_path, data_dict):
+    df = pd.DataFrame([data_dict])
+    header = not os.path.exists(csv_file_path)
+    df.to_csv(csv_file_path, mode='a', header=header, index=False)
